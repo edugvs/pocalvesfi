@@ -644,6 +644,14 @@ tr.selected-row{background:#EBF5FB!important}
           <input type="text" id="upload-pwd" value="48295907859">
         </div>
       </div>
+      <div class="fg">
+        <label>Cartão (só p/ fatura Itaú em PDF — a Itaú manda um PDF por cartão, sem código pra identificar automaticamente)</label>
+        <select id="upload-itau-card">
+          <option value="itau-fisico">Itaú Físico</option>
+          <option value="itau-virtual">Itaú Virtual</option>
+          <option value="itau-nicole">Itaú Nicole</option>
+        </select>
+      </div>
       <div id="upload-status"></div>
       <div class="mod-acts">
         <button class="btn-prim" id="upload-process-btn" onclick="processUpload()">Processar arquivo</button>
@@ -730,6 +738,9 @@ tr.selected-row{background:#EBF5FB!important}
         <option value="5355">BTG Virtual (5355)</option>
         <option value="2562">EDU Físico (2562)</option>
         <option value="6295">Nick (6295)</option>
+        <option value="itau-virtual">Itaú Virtual</option>
+        <option value="itau-fisico">Itaú Físico</option>
+        <option value="itau-nicole">Itaú Nicole</option>
       </select>
       <label>Tipo:</label>
       <select id="f-tipo" onchange="applyFilters()">
@@ -940,6 +951,9 @@ tr.selected-row{background:#EBF5FB!important}
           <option value="5355">BTG Virtual (5355)</option>
           <option value="6295">Nick Físico (6295)</option>
           <option value="2562">EDU Físico (2562)</option>
+          <option value="itau-virtual">Itaú Virtual</option>
+          <option value="itau-fisico">Itaú Físico</option>
+          <option value="itau-nicole">Itaú Nicole</option>
           <option value="">Outro</option>
         </select>
       </div>
@@ -2193,7 +2207,7 @@ const FLAGGED = new Set([
 const CARD_BY_MONTH = {"Janeiro":{"BTG Virtual":11643.38,"Nick":4727.60,"EDU Físico":3665.77},"Fevereiro":{"BTG Virtual":9026.32,"Nick":3651.00,"EDU Físico":3568.39},"Março":{"BTG Virtual":6161.71,"Nick":2578.49,"EDU Físico":1392.53},"Abril":{"BTG Virtual":7316.15,"Nick":3460.46,"EDU Físico":1751.51},"Maio":{"BTG Virtual":6171.71,"Nick":2540.69,"EDU Físico":1978.83}};
 const TOTALS = {"Janeiro":20036.75,"Fevereiro":16245.71,"Março":10132.73,"Abril":12528.12,"Maio":10691.23};
 const N_TX = {"Janeiro":182,"Fevereiro":166,"Março":91,"Abril":177,"Maio":90};
-const CARD_COLORS = {"BTG Virtual":"#2E6DA4","EDU Físico":"#1E8449","Nick":"#8E44AD"};
+const CARD_COLORS = {"BTG Virtual":"#2E6DA4","EDU Físico":"#1E8449","Nick":"#8E44AD","Itaú Virtual":"#EC7000","Itaú Físico":"#FF8C00","Itaú Nicole":"#C9184A"};
 const MONTHS = ["Janeiro","Fevereiro","Março","Abril","Maio"];
 const MONTH_CLASSES = {"Janeiro":"m-jan","Fevereiro":"m-fev","Março":"m-mar","Abril":"m-abr","Maio":"m-mai"};
 
@@ -2220,9 +2234,8 @@ function getCatTotals(month) {
 
 function getCardTotals(month) {
   const tx = getTx(month);
-  const map = {"5355":"BTG Virtual","2562":"EDU Físico","6295":"Nick"};
   const out = {};
-  tx.forEach(t => { const k = map[t.cartao]; out[k] = (out[k]||0) + t.val; });
+  tx.forEach(t => { const k = CARD_NAME_MAP[t.cartao] || t.cartao; out[k] = (out[k]||0) + t.val; });
   return out;
 }
 
@@ -2572,7 +2585,7 @@ function renderDoughnut() {
 // ═══════════════ TOP 10 TABLE ═══════════════
 function renderTop10() {
   const tx = [...getTx(curMonth)].sort((a,b)=>b.val-a.val).slice(0,10);
-  const cardNames = {"5355":"Virtual 5355","2562":"EDU 2562","6295":"Nick 6295"};
+  const cardNames = {"5355":"Virtual 5355","2562":"EDU 2562","6295":"Nick 6295","itau-virtual":"Itaú Virtual","itau-fisico":"Itaú Físico","itau-nicole":"Itaú Nicole"};
   document.getElementById('top10-body').innerHTML = tx.map((t,i) => `
     <tr>
       <td><strong>${i+1}</strong></td>
@@ -2698,7 +2711,7 @@ function hlTxt(str, q) {
 
 function renderTable(tx) {
   _lastFiltered = tx;
-  const cardNames = {"5355":"Virtual","2562":"EDU","6295":"Nick"};
+  const cardNames = {"5355":"Virtual","2562":"EDU","6295":"Nick","itau-virtual":"Itaú Virtual","itau-fisico":"Itaú Físico","itau-nicole":"Itaú Nicole"};
   const total = tx.reduce((s,t)=>s+t.val,0);
   const nFlag = tx.filter(t=>t.flag).length;
   document.getElementById('f-count').textContent =
@@ -3626,7 +3639,7 @@ function addMonthTab(month) {
 
 // ═══════════════ UPLOAD INVOICE ═══════════════
 let _pendingUpload = null; // { month, transactions, total, cardTotals }
-const CARD_NAME_MAP = {'5355':'BTG Virtual','6295':'Nick','2562':'EDU Físico'};
+const CARD_NAME_MAP = {'5355':'BTG Virtual','6295':'Nick','2562':'EDU Físico','itau-virtual':'Itaú Virtual','itau-fisico':'Itaú Físico','itau-nicole':'Itaú Nicole'};
 
 function openUploadModal(tab) {
   _pendingUpload = null;
@@ -3963,6 +3976,8 @@ function _pdfExtractRowTx(parts) {
   return out;
 }
 
+// Dispatcher: carrega o PDF uma vez, detecta o banco pela primeira página
+// (BTG vs Itaú têm formatos completamente diferentes) e roteia pro parser certo.
 async function processUploadPdf(file, statusEl) {
   const pdfReady = await ensurePDFJS(statusEl);
   if (!pdfReady) {
@@ -3972,10 +3987,30 @@ async function processUploadPdf(file, statusEl) {
   }
   statusEl.className='loading'; statusEl.textContent='⏳ Lendo PDF...';
 
+  let doc;
   try {
     const buffer = await file.arrayBuffer();
-    const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
+    doc = await pdfjsLib.getDocument({ data: buffer }).promise;
+  } catch(e) {
+    statusEl.className='err'; statusEl.textContent='❌ Erro ao ler PDF: ' + e.message;
+    return;
+  }
 
+  const firstPage = await doc.getPage(1);
+  const firstPageText = (await firstPage.getTextContent()).items.map(i => i.str).join('').toLowerCase();
+
+  // O logo/nome do banco costuma vir como imagem, não texto selecionável — por isso
+  // detectamos pelo texto do rodapé da BTG ("BTG Pactual S.A"), que é confiável.
+  // Sem esse marcador, assume Itaú (os dois únicos formatos suportados hoje).
+  if (firstPageText.includes('btg pactual')) {
+    await processUploadBtgPdf(doc, statusEl);
+  } else {
+    await processUploadItauPdf(doc, statusEl);
+  }
+}
+
+async function processUploadBtgPdf(doc, statusEl) {
+  try {
     let detectedMonth = null;
     let currentCard = null;
     const transactions = [];
@@ -4034,6 +4069,121 @@ async function processUploadPdf(file, statusEl) {
     _pendingUpload = { month, transactions, total, cardTotals };
     statusEl.className='ok';
     statusEl.innerHTML=`✅ <strong>${transactions.length} transações</strong> encontradas${detectedMonth ? ` · Mês detectado: <strong>${detectedMonth}</strong>` : ''} · Total: <strong>${fmtBRL(total)}</strong><br>Clique em "Confirmar" para salvar.`;
+    document.getElementById('upload-process-btn').style.display='none';
+    document.getElementById('upload-confirm-btn').style.display='inline-block';
+
+  } catch(e) {
+    statusEl.className='err'; statusEl.textContent='❌ Erro ao ler PDF: ' + e.message;
+  }
+}
+
+// ── Fatura Itaú em PDF ──────────────────────────────────────────────────
+// ATENÇÃO: validado só com uma fatura pequena (2 lançamentos, 1 cartão).
+// Formato: data "DD/MM" (sem nome do mês), sem "R$" repetido em cada linha
+// (só no cabeçalho da coluna), e o PDF tem 3 colunas lado a lado na mesma
+// altura (lançamentos | pagamentos | encargos) — por isso restringimos a
+// leitura à faixa X da coluna de lançamentos, senão pegaríamos texto de
+// caixas vizinhas. Só existe 1 titular/cartão por fatura Itaú (diferente
+// da BTG, que manda um PDF só com todos os cartões) — por isso o cartão é
+// escolhido manualmente no modal (dropdown "upload-itau-card").
+const ITAU_DATE_RE = /^(\d{2})\/(\d{2})$/;
+const ITAU_VAL_RE = /^-?[\d.]+,\d{2}$/;
+const ITAU_CARDHOLDER_RE = /^[A-ZÀ-Ú][A-ZÀ-Ú\s.]+$/;
+const NUM_TO_MONTH_FULL = {'01':'Janeiro','02':'Fevereiro','03':'Março','04':'Abril','05':'Maio','06':'Junho','07':'Julho','08':'Agosto','09':'Setembro','10':'Outubro','11':'Novembro','12':'Dezembro'};
+
+function _itauExtractRowTx(parts) {
+  const out = [];
+  let i = 0;
+  while (i < parts.length) {
+    const tok = (parts[i]||'').trim();
+    if (ITAU_DATE_RE.test(tok)) {
+      let j = i+1;
+      while (j < parts.length && !ITAU_VAL_RE.test((parts[j]||'').trim())) j++;
+      if (j < parts.length) {
+        out.push({ dateTok: tok, desc: parts.slice(i+1, j).join(' ').trim(), valTok: parts[j].trim() });
+        i = j+1;
+        continue;
+      }
+    }
+    i++;
+  }
+  return out;
+}
+
+async function processUploadItauPdf(doc, statusEl) {
+  try {
+    const cardKey = document.getElementById('upload-itau-card').value;
+    let detectedMonth = null;
+    let inSection = false;
+    let colMaxX = 340; // recalibrado ao achar o cabeçalho "DATA ESTABELECIMENTO VALOR EM R$"
+    const transactions = [];
+    let total = 0;
+    const cardTotals = {};
+
+    for (let p = 1; p <= doc.numPages; p++) {
+      const page = await doc.getPage(p);
+      const content = await page.getTextContent();
+      const rows = new Map();
+      for (const item of content.items) {
+        const y = Math.round(item.transform[5] * 2) / 2;
+        if (!rows.has(y)) rows.set(y, []);
+        rows.get(y).push({ x: item.transform[4], str: item.str });
+      }
+      const sortedY = [...rows.keys()].sort((a,b) => b - a);
+      for (const y of sortedY) {
+        const allItems = rows.get(y).sort((a,b) => a.x - b.x);
+        const compact = allItems.map(it=>it.str).join('').toLowerCase().replace(/\s+/g, '');
+
+        if (!detectedMonth) {
+          const m = compact.match(/vencimento:?(\d{2})\/(\d{2})\/\d{4}/);
+          if (m) detectedMonth = NUM_TO_MONTH_FULL[m[2]] || null;
+        }
+
+        if (compact.includes('comprasesaques')) { inSection = true; continue; }
+        if (compact.includes('comprasparceladas')) { inSection = false; continue; }
+        if (!inSection) continue;
+
+        if (compact.includes('data') && compact.includes('estabelecimento') && compact.includes('valoremr$')) {
+          colMaxX = Math.max(...allItems.map(it => it.x)) + 40;
+          continue;
+        }
+        if (compact.includes('lançamentosnocartão') || compact.includes('totaldoslançamentosatuais')) continue;
+
+        const items = allItems.filter(it => it.x < colMaxX);
+        const parts = items.map(it => it.str).filter(s => s.trim() !== '');
+        if (parts.length === 0) continue;
+
+        // Linha de subcabeçalho do titular (nome em maiúsculas, sem data/valor) — informativo, não usado
+        // pra separar cartões (isso já é decidido manualmente no dropdown do modal).
+        if (parts.length === 1 && ITAU_CARDHOLDER_RE.test(parts[0].trim())) continue;
+
+        for (const t of _itauExtractRowTx(parts)) {
+          const val = _pdfParseBRL(t.valTok);
+          if (isNaN(val) || val <= 0) continue; // pagamentos/estornos (negativos) não são compras
+          transactions.push({ data: t.dateTok, desc: t.desc.replace(/\s+/g,' ').trim(), val, tipo:'Vista', cartao: cardKey, cat:'Outros gastos', month:null, flag:false });
+          total += val;
+          cardTotals[cardKey] = (cardTotals[cardKey]||0) + val;
+        }
+      }
+    }
+
+    if (transactions.length === 0) {
+      statusEl.className='err'; statusEl.textContent='❌ Nenhuma transação encontrada. Verifique se é uma fatura Itaú em PDF.';
+      return;
+    }
+
+    const monthSel = document.getElementById('upload-month');
+    if (detectedMonth && [...monthSel.options].some(o => o.value === detectedMonth)) {
+      monthSel.value = detectedMonth;
+    }
+    const month = monthSel.value;
+    transactions.forEach(t => t.month = month);
+
+    _pendingUpload = { month, transactions, total, cardTotals };
+    statusEl.className='ok';
+    statusEl.innerHTML=`✅ <strong>${transactions.length} transações</strong> encontradas${detectedMonth ? ` · Mês detectado: <strong>${detectedMonth}</strong>` : ''} · Total: <strong>${fmtBRL(total)}</strong> · Cartão: <strong>${CARD_NAME_MAP[cardKey]}</strong><br>
+      <small style="opacity:.7">⚠️ Parser Itaú ainda pouco testado (só validado com fatura pequena) — confira as transações antes de confirmar.</small><br>
+      Clique em "Confirmar" para salvar.`;
     document.getElementById('upload-process-btn').style.display='none';
     document.getElementById('upload-confirm-btn').style.display='inline-block';
 
@@ -4564,7 +4714,7 @@ function renderSubs() {
 
   document.getElementById('sub-count').textContent = `${list.length} de ${SUBSCRIPTIONS.length} serviços`;
 
-  const cardNames  = {'5355':'Virtual', '2562':'EDU', '6295':'Nick', '':'—'};
+  const cardNames  = {'5355':'Virtual', '2562':'EDU', '6295':'Nick', '':'—', 'itau-virtual':'Itaú Virtual', 'itau-fisico':'Itaú Físico', 'itau-nicole':'Itaú Nicole'};
   const freqLabel  = {mensal:'mensal', anual:'anual', semanal:'semanal'};
 
   // Group by category
@@ -4805,7 +4955,7 @@ function showMerchantModal(desc) {
     txs.length>0?`<span>Ticket médio: <strong>${fmtBRL(total/txs.length)}</strong></span>`:'',
     txs.length>0?`<span>Categorias: ${[...new Set(txs.map(t=>t.cat))].join(', ')}</span>`:''
   ].filter(Boolean).join(' · ');
-  const cardNames = {"5355":"Virtual","2562":"EDU","6295":"Nick"};
+  const cardNames = {"5355":"Virtual","2562":"EDU","6295":"Nick","itau-virtual":"Itaú Virtual","itau-fisico":"Itaú Físico","itau-nicole":"Itaú Nicole"};
   document.getElementById('merchant-modal-body').innerHTML = `
     <div class="merchant-modal-tbl-wrap">
     <table class="merchant-modal-tbl">
