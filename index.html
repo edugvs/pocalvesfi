@@ -618,8 +618,8 @@ tr.selected-row{background:#EBF5FB!important}
     <!-- Import pane -->
     <div id="upload-pane-import" class="upload-pane active">
       <div class="fg">
-        <label>Arquivo da fatura (.xlsx)</label>
-        <input type="file" id="upload-file" accept=".xlsx,.xls" style="padding:6px 0;border:none;font-size:.84rem">
+        <label>Arquivo da fatura (.xlsx ou .pdf)</label>
+        <input type="file" id="upload-file" accept=".xlsx,.xls,.pdf" style="padding:6px 0;border:none;font-size:.84rem">
       </div>
       <div class="frow">
         <div class="fg">
@@ -3449,6 +3449,7 @@ function addMonthTab(month) {
 
 // ═══════════════ UPLOAD INVOICE ═══════════════
 let _pendingUpload = null; // { month, transactions, total, cardTotals }
+const CARD_NAME_MAP = {'5355':'BTG Virtual','6295':'Nick','2562':'EDU Físico'};
 
 function openUploadModal(tab) {
   _pendingUpload = null;
@@ -3567,11 +3568,14 @@ async function ensureXLSX(statusEl) {
 
 async function processUpload() {
   const file = document.getElementById('upload-file').files[0];
-  const month = document.getElementById('upload-month').value;
-  const pwd = document.getElementById('upload-pwd').value.trim();
   const statusEl = document.getElementById('upload-status');
 
-  if (!file) { statusEl.className='err'; statusEl.textContent='⚠️ Selecione um arquivo .xlsx'; return; }
+  if (!file) { statusEl.className='err'; statusEl.textContent='⚠️ Selecione um arquivo .xlsx ou .pdf'; return; }
+
+  if (/\.pdf$/i.test(file.name)) { await processUploadPdf(file, statusEl); return; }
+
+  const month = document.getElementById('upload-month').value;
+  const pwd = document.getElementById('upload-pwd').value.trim();
 
   // Ensure SheetJS is loaded before proceeding
   const xlsxReady = await ensureXLSX(statusEl);
@@ -3654,7 +3658,6 @@ async function processUpload() {
     const transactions = [];
     let total = 0;
     const cardTotals = {'BTG Virtual':0,'Nick':0,'EDU Físico':0};
-    const cardNameMap = {'5355':'BTG Virtual','6295':'Nick','2562':'EDU Físico'};
 
     for (let i = headerIdx+1; i < rows.length; i++) {
       const row = rows[i];
@@ -3682,7 +3685,7 @@ async function processUpload() {
       }
 
       const cartao = rawCartao.slice(-4) || '5355';
-      const cardKey = cardNameMap[cartao] || 'BTG Virtual';
+      const cardKey = CARD_NAME_MAP[cartao] || 'BTG Virtual';
 
       transactions.push({ data, desc:descFinal, val, tipo, cartao, cat:'Outros', month, flag:false });
       total += val;
@@ -3702,6 +3705,152 @@ async function processUpload() {
 
   } catch(e) {
     statusEl.className='err'; statusEl.textContent='❌ Erro inesperado: ' + e.message;
+  }
+}
+
+// ── PDF.js dynamic loader with CDN fallback ────────────────────────────────
+async function ensurePDFJS(statusEl) {
+  if (typeof pdfjsLib !== 'undefined' && pdfjsLib.getDocument) return true;
+  const ver = '3.11.174';
+  const libCdns = [
+    `https://cdn.jsdelivr.net/npm/pdfjs-dist@${ver}/build/pdf.min.js`,
+    `https://unpkg.com/pdfjs-dist@${ver}/build/pdf.min.js`,
+    `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${ver}/pdf.min.js`,
+  ];
+  const workerCdns = [
+    `https://cdn.jsdelivr.net/npm/pdfjs-dist@${ver}/build/pdf.worker.min.js`,
+    `https://unpkg.com/pdfjs-dist@${ver}/build/pdf.worker.min.js`,
+    `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${ver}/pdf.worker.min.js`,
+  ];
+  for (let i = 0; i < libCdns.length; i++) {
+    if (statusEl) { statusEl.className='loading'; statusEl.textContent=`⏳ Carregando leitor de PDF (tentativa ${i+1}/${libCdns.length})...`; }
+    try {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = libCdns[i];
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+      if (typeof pdfjsLib !== 'undefined' && pdfjsLib.getDocument) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = workerCdns[i];
+        return true;
+      }
+    } catch(e) { /* try next */ }
+  }
+  return false;
+}
+
+// ── PDF invoice parsing (fatura BTG em PDF) ────────────────────────────────
+const PDF_MONTH_NUM = {Jan:'01',Fev:'02',Mar:'03',Abr:'04',Mai:'05',Jun:'06',Jul:'07',Ago:'08',Set:'09',Out:'10',Nov:'11',Dez:'12'};
+const PDF_MONTH_FULL = {Jan:'Janeiro',Fev:'Fevereiro',Mar:'Março',Abr:'Abril',Mai:'Maio',Jun:'Junho',Jul:'Julho',Ago:'Agosto',Set:'Setembro',Out:'Outubro',Nov:'Novembro',Dez:'Dezembro'};
+const PDF_DATE_RE = /^(\d{1,2})\s+(Jan|Fev|Mar|Abr|Mai|Jun|Jul|Ago|Set|Out|Nov|Dez)$/i;
+const PDF_VAL_RE = /^-?\s*R\$\s?[\d.,]+$/i;
+
+function _pdfParseBRL(raw) {
+  let s = String(raw).replace(/R\$/gi,'').trim().replace(/\s+/g,'');
+  s = s.replace(/\./g,'').replace(',', '.');
+  const n = parseFloat(s);
+  return isNaN(n) ? NaN : n;
+}
+
+// A "row" is every text fragment sharing the same y-coordinate on the page, sorted by x.
+// Faturas BTG usam 2 colunas de lançamentos lado a lado, então uma linha pode conter 0, 1 ou 2 transações.
+function _pdfExtractRowTx(parts) {
+  const out = [];
+  let i = 0;
+  while (i < parts.length) {
+    const tok = (parts[i]||'').trim();
+    if (PDF_DATE_RE.test(tok)) {
+      let j = i+1;
+      while (j < parts.length && !PDF_VAL_RE.test((parts[j]||'').trim())) j++;
+      if (j < parts.length) {
+        out.push({ dateTok: tok, desc: parts.slice(i+1, j).join(' ').trim(), valTok: parts[j].trim() });
+        i = j+1;
+        continue;
+      }
+    }
+    i++;
+  }
+  return out;
+}
+
+async function processUploadPdf(file, statusEl) {
+  const pdfReady = await ensurePDFJS(statusEl);
+  if (!pdfReady) {
+    statusEl.className='err';
+    statusEl.innerHTML='❌ Não foi possível carregar o leitor de PDF.<br>Verifique sua conexão com a internet e tente novamente.';
+    return;
+  }
+  statusEl.className='loading'; statusEl.textContent='⏳ Lendo PDF...';
+
+  try {
+    const buffer = await file.arrayBuffer();
+    const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
+
+    let detectedMonth = null;
+    let currentCard = null;
+    const transactions = [];
+    let total = 0;
+    const cardTotals = {'BTG Virtual':0,'Nick':0,'EDU Físico':0};
+
+    for (let p = 1; p <= doc.numPages; p++) {
+      const page = await doc.getPage(p);
+      const content = await page.getTextContent();
+      const rows = new Map();
+      for (const item of content.items) {
+        const y = Math.round(item.transform[5] * 2) / 2;
+        if (!rows.has(y)) rows.set(y, []);
+        rows.get(y).push({ x: item.transform[4], str: item.str });
+      }
+      const sortedY = [...rows.keys()].sort((a,b) => b - a);
+      for (const y of sortedY) {
+        const parts = rows.get(y).sort((a,b) => a.x - b.x).map(it => it.str);
+        const lineStr = parts.join(' ');
+
+        if (!detectedMonth) {
+          const m = lineStr.match(/fatura de (\p{L}+) de \d{4}/iu);
+          if (m && Object.values(PDF_MONTH_FULL).includes(m[1])) detectedMonth = m[1];
+        }
+        const cardM = lineStr.match(/cart[ãa]o (?:f[íi]sico|virtual).*?Final\s+(\d{4})/i);
+        if (cardM) currentCard = cardM[1];
+
+        for (const t of _pdfExtractRowTx(parts)) {
+          const val = _pdfParseBRL(t.valTok);
+          if (isNaN(val) || val <= 0) continue; // pagamentos/estornos (negativos) não são compras
+          const dm = t.dateTok.match(PDF_DATE_RE);
+          const monKey = Object.keys(PDF_MONTH_NUM).find(k => k.toLowerCase() === dm[2].toLowerCase());
+          const data = `${dm[1].padStart(2,'0')}/${PDF_MONTH_NUM[monKey]}`;
+          const tipo = /\(\d+\/\d+\)\s*$/.test(t.desc) ? 'Parcela' : 'Vista';
+          const cartao = currentCard || '5355';
+          const cardKey = CARD_NAME_MAP[cartao] || 'BTG Virtual';
+          transactions.push({ data, desc: t.desc, val, tipo, cartao, cat:'Outros', month:null, flag:false });
+          total += val;
+          cardTotals[cardKey] = (cardTotals[cardKey]||0) + val;
+        }
+      }
+    }
+
+    if (transactions.length === 0) {
+      statusEl.className='err'; statusEl.textContent='❌ Nenhuma transação encontrada. Verifique se é uma fatura BTG em PDF.';
+      return;
+    }
+
+    const monthSel = document.getElementById('upload-month');
+    if (detectedMonth && [...monthSel.options].some(o => o.value === detectedMonth)) {
+      monthSel.value = detectedMonth;
+    }
+    const month = monthSel.value;
+    transactions.forEach(t => t.month = month);
+
+    _pendingUpload = { month, transactions, total, cardTotals };
+    statusEl.className='ok';
+    statusEl.innerHTML=`✅ <strong>${transactions.length} transações</strong> encontradas${detectedMonth ? ` · Mês detectado: <strong>${detectedMonth}</strong>` : ''} · Total: <strong>${fmtBRL(total)}</strong><br>Clique em "Confirmar" para salvar.`;
+    document.getElementById('upload-process-btn').style.display='none';
+    document.getElementById('upload-confirm-btn').style.display='inline-block';
+
+  } catch(e) {
+    statusEl.className='err'; statusEl.textContent='❌ Erro ao ler PDF: ' + e.message;
   }
 }
 
