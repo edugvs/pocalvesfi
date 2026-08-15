@@ -2036,9 +2036,115 @@ const MERCHANT_CAT = {
   // CONTAS / UTILIDADES
   "Enel":                  "Contas/Utilidades",
   "Vivo":                  "Contas/Utilidades",
+  "Claro":                 "Contas/Utilidades",
 
   // ALIMENTAÇÃO (VENDING)
   "Vend Perto":            "Alimentação (Vending)",
+
+  // ── Adições identificadas na revisão do bucket "Outros" ──────────────────
+  // VIAGEM / MILHAS
+  "Airbnb":                "Viagem/Milhas",
+  "Loungekey":             "Viagem/Milhas",   // acesso a sala VIP em aeroporto
+
+  // ALIMENTAÇÃO — restaurantes/cafés/padarias identificados
+  "Moma Madalena":         "Alimentação",
+  "Cantina Gigio":         "Alimentação",
+  "Pizzaria Piciocchi":    "Alimentação",
+  "Restaurante Tagliarini":"Alimentação",
+  "Joleab Doces":          "Alimentação",
+  "Texas Gramado":         "Alimentação",
+  "Cacau Gastronomia":     "Alimentação",
+  "Vinicola Vista Alegre": "Alimentação",
+  "Mundo Gelado":          "Alimentação",
+  "Johnny Rockets":        "Alimentação",
+  "Le Jardin":             "Alimentação",
+  "Faria Gastronomia":     "Alimentação",
+  "Home Of Chocolate":     "Alimentação",
+  "Aroma De Cafe":         "Alimentação",
+  "Bar Do Juarez":         "Alimentação",
+  "El Cordero":            "Alimentação",
+  "Canelle Healthy":       "Alimentação",
+  "Keetabr Esfiharia":     "Alimentação",
+  "Restaurante Leggero":   "Alimentação",
+  "Hr Café Gramado":       "Alimentação",
+  "Busger Santo Andre":    "Alimentação",
+  "Bbb Tatuape Hambur":    "Alimentação",
+  "Popeyes":               "Alimentação",
+  "Chiquinho Sorvetes":    "Alimentação",
+  "Nakata Cafe":           "Alimentação",
+  "Lanchonete E Restauran":"Alimentação",
+  "Vidas Verdes Alimentos":"Alimentação",
+  "Kozinha Arabe":         "Alimentação",
+  "Feira Livre":           "Alimentação",
+  "Tc Das Massas":         "Alimentação",
+  "Pasteleiro":            "Alimentação",
+  "Chef Fabio Pereira":    "Alimentação",     // chef particular
+  "Empório Canela":        "Alimentação",
+  "Cervejaria Felsen":     "Alimentação",
+  "Cacau Show":            "Alimentação",
+  "Levedura Comercio":     "Alimentação",     // insumos de padaria
+  "Keetabr":               "Alimentação",     // app de pagamento usado por feirantes/food (mesmo padrão da Keetabr Esfiharia)
+
+  // SUPERMERCADO
+  "Coop":                  "Supermercado",     // Cooperativa de Consumo (SP)
+  "Armazém Marangoni":     "Supermercado",
+  "Mercado E Conveniencia":"Supermercado",
+  "Dark Store":            "Supermercado",     // mercado de entrega rápida
+
+  // SAÚDE / BELEZA
+  "Mlp Epoca Cosmeticos":  "Saúde/Beleza",     // Época Cosméticos (marketplace)
+  "Manual Saúde Brasil":   "Saúde/Beleza",
+  "Santiagobarbershop":    "Saúde/Beleza",
+  "Sephora":               "Saúde/Beleza",
+  "Drogaria Do Walter":    "Saúde/Beleza",
+  "Farmácias São João":    "Saúde/Beleza",
+  "Farmácia São João":     "Saúde/Beleza",
+  "Droga Raia":            "Saúde/Beleza",
+  "Drogaria São Paulo":    "Saúde/Beleza",
+
+  // PETS
+  "Vet Popular":           "Pets",
+
+  // SERVIÇOS / PROFISSIONAL
+  "Donamaid":              "Serviços/Profissional",  // diarista por hora (app)
+
+  // COMPRAS / E-COMMERCE
+  "Tok&stok":              "Compras/E-commerce",
+  "Kiyo Modas":            "Compras/E-commerce",
+  "Margarida Bijuterias":  "Compras/E-commerce",
+  "Daiso":                 "Compras/E-commerce",
+  "Lembranca De Gramado":  "Compras/E-commerce",
+
+  // ENTRETENIMENTO / GAMES
+  "Space Adventure":       "Entretenimento/Games",
+  "Fever Candlelight":     "Entretenimento/Games",
+  "Rainha Do Derby":       "Entretenimento/Games",   // rede de loterias/apostas
+
+  // TRANSPORTE
+  "Whoosh":                "Transporte",       // patinete elétrico compartilhado
+  "Urentcar":              "Transporte",       // locação de veículo
+  "Super Posto":           "Transporte",
+
+  // ── Regras genéricas por palavra-chave (pega comerciantes novos/futuros) ──
+  "restaurante":           "Alimentação",
+  "pizzaria":              "Alimentação",
+  "padaria":               "Alimentação",
+  "confeitaria":           "Alimentação",
+  "sorveteria":            "Alimentação",
+  "hamburgueria":          "Alimentação",
+  "gastronomia":           "Alimentação",
+  "lanchonete":            "Alimentação",
+  "doceria":               "Alimentação",
+  "cafeteria":             "Alimentação",
+  "farmácia":              "Saúde/Beleza",
+  "farmacia":              "Saúde/Beleza",
+  "drogaria":              "Saúde/Beleza",
+  "estacionamento":        "Transporte",
+  "atacadista":            "Supermercado",
+  "petshop":               "Pets",
+  "pet shop":              "Pets",
+  "veterinár":             "Pets",
+  "veterinar":             "Pets",
 };
 
 // Comerciantes que precisam de revisão manual (⚠️)
@@ -2054,6 +2160,15 @@ const FLAGGED = new Set([
   "journeys in mi",    // app? jogo?
   "daniel rizzi",      // pessoa física — qual serviço?
   "mlp epoca",         // cosméticos marketplace — confirmar
+  "mara rodrigues aguiar", // pessoa física — qual serviço? (3 ocorrências)
+  "marcelo sutil da",  // pessoa física — qual serviço?
+  "loja space canela", // loja em Canela/Gramado — qual tipo de produto?
+  "00033 sh analia franc", // loja no Shopping Anália Franco — qual tipo?
+  "bertojaemubarack",  // nome concatenado — comerciante desconhecido
+  "ericlembranca",     // "lembrança" — presente/souvenir? loja física?
+  "gabrielsilvaleme",  // nome concatenado — comerciante desconhecido
+  "embrasa",           // desconhecido
+  "n fernandes e cia", // desconhecido
 ]);
 const CAT_BY_MONTH = {"Março":{"Viagem/Milhas":3991.53,"Alimentação":1509.86,"Saúde/Beleza":1410.68,"Compras/E-commerce":789.77,"Assinaturas/Streaming":710.58,"Transporte":614.18,"Entretenimento/Games":525.19,"Serviços/Profissional":260.35,"Alimentação (Vending)":166.78,"Outros":98.90,"Pets":54.91,"Contas/Utilidades":0},"Abril":{"Viagem/Milhas":3921.53,"Alimentação":2652.13,"Entretenimento/Games":935.27,"Saúde/Beleza":921.21,"Compras/E-commerce":921.07,"Transporte":815.55,"Assinaturas/Streaming":766.58,"Pets":474.82,"Alimentação (Vending)":413.60,"Serviços/Profissional":294.90,"Contas/Utilidades":224.77,"Outros":186.69},"Maio":{"Viagem/Milhas":4301.33,"Saúde/Beleza":2068.54,"Alimentação":1556.53,"Assinaturas/Streaming":590.68,"Transporte":518.79,"Compras/E-commerce":449.98,"Serviços/Profissional":264.00,"Pets":257.97,"Entretenimento/Games":227.97,"Contas/Utilidades":215.80,"Alimentação (Vending)":132.84,"Outros":106.80}};
 const CARD_BY_MONTH = {"Janeiro":{"BTG Virtual":11643.38,"Nick":4727.60,"EDU Físico":3665.77},"Fevereiro":{"BTG Virtual":9026.32,"Nick":3651.00,"EDU Físico":3568.39},"Março":{"BTG Virtual":6161.71,"Nick":2578.49,"EDU Físico":1392.53},"Abril":{"BTG Virtual":7316.15,"Nick":3460.46,"EDU Físico":1751.51},"Maio":{"BTG Virtual":6171.71,"Nick":2540.69,"EDU Físico":1978.83}};
