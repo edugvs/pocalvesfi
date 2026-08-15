@@ -3617,12 +3617,23 @@ async function confirmDeleteMonth(month) {
   statusEl.textContent = `Apagando ${month}…`;
   document.getElementById('del-months-list').appendChild(statusEl);
 
-  // Remove from Firestore — also track hardcoded months in deletedMonths
-  const extraMonths = Object.assign({}, _fsData.extraMonths || {});
-  delete extraMonths[month];
+  // Remove do Firestore. set(patch,{merge:true}) faz merge PROFUNDO em objetos
+  // aninhados — mandar extraMonths sem a chave do mês não apaga a chave lá,
+  // ela simplesmente é ignorada e continua salva (o mês "voltava" ao recarregar
+  // a página ou reabrir o app). Por isso usamos FieldValue.delete() no campo
+  // aninhado específico, e atualizamos o estado local separadamente.
+  if (_fsData.extraMonths) delete _fsData.extraMonths[month];
   const deletedMonths = [...(_fsData.deletedMonths || [])];
   if (!deletedMonths.includes(month)) deletedMonths.push(month);
-  await _saveFsData({ extraMonths, deletedMonths });
+  _fsData.deletedMonths = deletedMonths;
+  if (_currentUid) {
+    try {
+      await _db.collection('users').doc(_currentUid).collection('data').doc('main').set({
+        extraMonths: { [month]: firebase.firestore.FieldValue.delete() },
+        deletedMonths
+      }, { merge: true });
+    } catch(e) { console.warn('Firestore save error:', e); }
+  }
 
   // Remove from in-memory arrays
   const idx = MONTHS.indexOf(month);
