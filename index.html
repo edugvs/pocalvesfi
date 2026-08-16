@@ -707,6 +707,7 @@ tr.selected-row{background:#EBF5FB!important}
     <button class="ptab" onclick="setPage('orcamento')">💰 Orçamento</button>
     <button class="ptab" onclick="setPage('tendencias')">📈 Tendências</button>
     <button class="ptab" onclick="setPage('assinaturas')">📌 Assinaturas</button>
+    <button class="ptab" onclick="setPage('conta')">🏦 Conta</button>
     <button class="ptab" onclick="openCatManager()" style="margin-left:auto;color:#888;font-size:.75rem">⚙️ <span class="ptab-cat-text">Categorias</span></button>
   </div>
 
@@ -838,6 +839,25 @@ tr.selected-row{background:#EBF5FB!important}
       <span id="sub-count" style="margin-left:auto;font-size:.74rem;color:#888"></span>
     </div>
     <div id="sub-list"></div>
+  </div>
+
+  <!-- ══ PAGE: CONTA (extrato) ══ -->
+  <div id="pg-conta" class="section">
+    <div class="kpi-row" id="conta-kpis"></div>
+    <div class="sub-controls">
+      <label style="font-size:.72rem;font-weight:700;color:#888;text-transform:uppercase">Extrato (.pdf)</label>
+      <input type="file" id="conta-file" accept=".pdf" style="font-size:.82rem">
+      <button class="btn" onclick="processExtratoUpload()">Importar</button>
+      <span id="conta-status" style="margin-left:auto;font-size:.78rem"></span>
+    </div>
+    <div class="card" style="padding-bottom:0;overflow:hidden">
+      <div class="tbl-wrap">
+        <table id="conta-table">
+          <thead><tr><th>Data</th><th>Descrição</th><th>Valor</th><th>Saldo do dia</th></tr></thead>
+          <tbody id="conta-body"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <!-- ══ PAGE: TENDÊNCIAS ══ -->
@@ -1039,6 +1059,7 @@ function devBypass() {
       loadCatOverrides();
       loadConfirmedFlags();
       loadSubs();
+      loadExtrato();
       populateCatFilter();
       renderAll();
       renderTable(ALL_TX);
@@ -1166,6 +1187,7 @@ _auth.onAuthStateChanged(async user => {
       loadCatOverrides();
       loadConfirmedFlags();
       loadSubs();
+      loadExtrato();
       populateCatFilter();
       renderAll();
       renderTable(ALL_TX);
@@ -2273,6 +2295,7 @@ function setPage(p) {
   if (p === 'transacoes')   renderTable(ALL_TX);
   if (p === 'assinaturas')  renderSubs();
   if (p === 'orcamento')    renderOrcamento();
+  if (p === 'conta')        renderConta();
 }
 
 // ═══════════════ SPARKLINE HELPER ═══════════════
@@ -3541,6 +3564,125 @@ function renderAll() {
   renderCardBar();
   renderDoughnut();
   renderTop10();
+}
+
+// ═══════════════ EXTRATO CONTA CORRENTE (Itaú) ════════════════════════════
+// Diferente da fatura de cartão, o extrato é um fluxo de caixa contínuo, não
+// "gasto por categoria" — por isso fica numa aba separada, sem categoria,
+// orçamento ou vínculo de mês/cartão. Guardado em _fsData.extrato (array).
+let EXTRATO = [];
+
+function loadExtrato() {
+  EXTRATO = Array.isArray(_fsData.extrato) ? _fsData.extrato.slice() : [];
+}
+
+function _extratoKey(e) { return `${e.data}|${e.desc}|${e.val}`; }
+
+async function saveExtrato(newEntries) {
+  const existingKeys = new Set(EXTRATO.map(_extratoKey));
+  const toAdd = newEntries.filter(e => !existingKeys.has(_extratoKey(e)));
+  EXTRATO = [...EXTRATO, ...toAdd].sort((a,b) => _extratoDateVal(b.data) - _extratoDateVal(a.data));
+  await _saveFsData({ extrato: EXTRATO });
+  return toAdd.length;
+}
+
+function _extratoDateVal(ddmmyyyy) {
+  const [d,m,y] = ddmmyyyy.split('/').map(Number);
+  return new Date(y, m-1, d).getTime();
+}
+
+async function ensurePDFJSConta() { return ensurePDFJS(document.getElementById('conta-status')); }
+
+const EXTRATO_DATE_RE = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+const EXTRATO_VAL_RE = /^-?[\d.]+,\d{2}$/;
+
+async function processExtratoUpload() {
+  const file = document.getElementById('conta-file').files[0];
+  const statusEl = document.getElementById('conta-status');
+  if (!file) { statusEl.className='err'; statusEl.textContent='⚠️ Selecione um arquivo .pdf'; return; }
+
+  const pdfReady = await ensurePDFJSConta();
+  if (!pdfReady) {
+    statusEl.className='err'; statusEl.textContent='❌ Não foi possível carregar o leitor de PDF.';
+    return;
+  }
+  statusEl.className='loading'; statusEl.textContent='⏳ Lendo extrato...';
+
+  try {
+    const buffer = await file.arrayBuffer();
+    const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
+    const newEntries = [];
+
+    for (let p = 1; p <= doc.numPages; p++) {
+      const page = await doc.getPage(p);
+      const content = await page.getTextContent();
+      const rows = new Map();
+      for (const item of content.items) {
+        const y = Math.round(item.transform[5] * 2) / 2;
+        if (!rows.has(y)) rows.set(y, []);
+        rows.get(y).push({ x: item.transform[4], str: item.str });
+      }
+      const sortedY = [...rows.keys()].sort((a,b) => b - a);
+      for (const y of sortedY) {
+        const parts = rows.get(y).sort((a,b) => a.x - b.x).map(it => it.str).filter(s => s.trim() !== '');
+        if (parts.length < 3) continue;
+        const dateTok = parts[0].trim();
+        if (!EXTRATO_DATE_RE.test(dateTok)) continue;
+        const valTok = parts[parts.length-1].trim();
+        if (!EXTRATO_VAL_RE.test(valTok)) continue;
+        const desc = parts.slice(1, -1).join(' ').trim();
+        if (!desc) continue;
+        const val = _pdfParseBRL(valTok);
+        if (isNaN(val)) continue;
+
+        if (/^SALDO DO DIA$/i.test(desc)) {
+          // Não é um lançamento — é o saldo consolidado naquela data (pode não
+          // ter nenhum outro lançamento no mesmo dia). Guarda como linha própria.
+          newEntries.push({ data: dateTok, desc, val: 0, saldoDia: val, isBalance: true });
+          continue;
+        }
+        newEntries.push({ data: dateTok, desc, val, saldoDia: null, isBalance: false });
+      }
+    }
+
+    if (newEntries.length === 0) {
+      statusEl.className='err'; statusEl.textContent='❌ Nenhum lançamento encontrado. Verifique se é um extrato Itaú em PDF.';
+      return;
+    }
+
+    const nAdded = await saveExtrato(newEntries);
+    statusEl.className='ok';
+    statusEl.textContent = `✅ ${nAdded} lançamento(s) novo(s) importado(s) (${newEntries.length - nAdded} já existiam).`;
+    document.getElementById('conta-file').value = '';
+    renderConta();
+  } catch(e) {
+    statusEl.className='err'; statusEl.textContent='❌ Erro ao ler PDF: ' + e.message;
+  }
+}
+
+function renderConta() {
+  const movs = EXTRATO.filter(e => !e.isBalance);
+  const entradas = movs.filter(e => e.val > 0).reduce((s,e) => s+e.val, 0);
+  const saidas = movs.filter(e => e.val < 0).reduce((s,e) => s+e.val, 0);
+  const saldoRecente = EXTRATO.find(e => e.isBalance); // já ordenado do mais recente pro mais antigo
+
+  document.getElementById('conta-kpis').innerHTML = `
+    <div class="kpi"><div class="kpi-lbl">Entradas</div><div class="kpi-val" style="color:#1E8449">${fmtBRL(entradas)}</div></div>
+    <div class="kpi"><div class="kpi-lbl">Saídas</div><div class="kpi-val" style="color:#C0392B">${fmtBRL(Math.abs(saidas))}</div></div>
+    <div class="kpi"><div class="kpi-lbl">Saldo mais recente</div><div class="kpi-val">${saldoRecente ? fmtBRL(saldoRecente.saldoDia) : '—'}</div><div class="kpi-sub">${saldoRecente ? saldoRecente.data : 'sem dados'}</div></div>
+    <div class="kpi"><div class="kpi-lbl">Lançamentos</div><div class="kpi-val">${movs.length}</div></div>
+  `;
+
+  document.getElementById('conta-body').innerHTML = EXTRATO.length === 0
+    ? `<tr><td colspan="4" style="text-align:center;padding:24px;opacity:.6">Nenhum lançamento importado ainda.</td></tr>`
+    : EXTRATO.map(e => e.isBalance
+      ? `<tr style="background:var(--bg);opacity:.75"><td>${e.data}</td><td colspan="2" style="font-style:italic">Saldo do dia</td><td style="font-weight:700">${fmtBRL(e.saldoDia)}</td></tr>`
+      : `<tr>
+        <td>${e.data}</td>
+        <td>${e.desc}</td>
+        <td style="color:${e.val>0?'#1E8449':'#C0392B'};font-weight:600">${e.val>0?'+':''}${fmtBRL(e.val)}</td>
+        <td></td>
+      </tr>`).join('');
 }
 
 // ═══════════════ SUBSCRIPTIONS — data (must be before INIT) ══════════════
