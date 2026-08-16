@@ -853,7 +853,7 @@ tr.selected-row{background:#EBF5FB!important}
     <div class="card" style="padding-bottom:0;overflow:hidden">
       <div class="tbl-wrap">
         <table id="conta-table">
-          <thead><tr><th>Data</th><th>Descrição</th><th>Valor</th><th>Saldo do dia</th></tr></thead>
+          <thead><tr><th>Data</th><th>Descrição</th><th>Valor</th><th>Tipo</th><th>Categoria</th><th>Saldo do dia</th></tr></thead>
           <tbody id="conta-body"></tbody>
         </table>
       </div>
@@ -2201,6 +2201,20 @@ const MERCHANT_CAT = {
   "financiamento":         "Empréstimos e financiamentos",
   "empréstimo":            "Empréstimos e financiamentos",
   "emprestimo":            "Empréstimos e financiamentos",
+
+  // ── Lançamentos típicos de extrato de conta corrente ──────────────────────
+  "seguro cartao":         "Boletos diversos",
+  "seguro cartão":         "Boletos diversos",
+  "autopass":              "Veículos",     // pedágio eletrônico
+  "sem parar":             "Veículos",     // pedágio eletrônico
+  "conectcar":             "Veículos",     // pedágio eletrônico
+  "pedagio":               "Veículos",
+  "pedágio":               "Veículos",
+  "iptu":                  "Boletos diversos",
+  "ipva":                  "Veículos",
+  "condominio":            "Casa",
+  "condomínio":            "Casa",
+  "aluguel":               "Casa",
 };
 
 // Comerciantes que precisam de revisão manual (⚠️)
@@ -2229,7 +2243,7 @@ const FLAGGED = new Set([
 const CARD_BY_MONTH = {"Janeiro":{"BTG Virtual":11643.38,"Nick":4727.60,"EDU Físico":3665.77},"Fevereiro":{"BTG Virtual":9026.32,"Nick":3651.00,"EDU Físico":3568.39},"Março":{"BTG Virtual":6161.71,"Nick":2578.49,"EDU Físico":1392.53},"Abril":{"BTG Virtual":7316.15,"Nick":3460.46,"EDU Físico":1751.51},"Maio":{"BTG Virtual":6171.71,"Nick":2540.69,"EDU Físico":1978.83}};
 const TOTALS = {"Janeiro":20036.75,"Fevereiro":16245.71,"Março":10132.73,"Abril":12528.12,"Maio":10691.23};
 const N_TX = {"Janeiro":182,"Fevereiro":166,"Março":91,"Abril":177,"Maio":90};
-const CARD_COLORS = {"BTG Virtual":"#2E6DA4","EDU Físico":"#1E8449","Nick":"#8E44AD","Itaú Virtual":"#EC7000","Itaú Físico":"#FF8C00","Itaú Nicole":"#C9184A"};
+const CARD_COLORS = {"BTG Virtual":"#2E6DA4","EDU Físico":"#1E8449","Nick":"#8E44AD","Itaú Virtual":"#EC7000","Itaú Físico":"#FF8C00","Itaú Nicole":"#C9184A","Conta Corrente":"#6C757D"};
 const MONTHS = ["Janeiro","Fevereiro","Março","Abril","Maio"];
 const MONTH_CLASSES = {"Janeiro":"m-jan","Fevereiro":"m-fev","Março":"m-mar","Abril":"m-abr","Maio":"m-mai"};
 
@@ -2243,8 +2257,21 @@ const fmtK   = v => v >= 1000 ? 'R$ ' + (v/1000).toFixed(1) + 'k' : fmtBRL(v);
 const delta  = (cur,prev) => prev > 0 ? ((cur-prev)/prev*100).toFixed(1) : '—';
 
 function getTx(month) {
-  if (month === 'todos') return ALL_TX;
-  return ALL_TX.filter(t => t.month === month);
+  const merged = ALL_TX.concat(_extratoAsTx());
+  if (month === 'todos') return merged;
+  return merged.filter(t => t.month === month);
+}
+
+// Recalcula TOTALS/N_TX (usados por KPIs, insights e comparativos que leem
+// esses objetos estáticos direto, em vez de via getTx) pra ficarem
+// consistentes com o total unificado cartão+extrato. Chamar depois de
+// qualquer import (fatura ou extrato).
+function resyncMonthTotals() {
+  MONTHS.forEach(m => {
+    const tx = getTx(m);
+    TOTALS[m] = tx.reduce((s,t) => s+t.val, 0);
+    N_TX[m] = tx.length;
+  });
 }
 
 function getCatTotals(month) {
@@ -2866,7 +2893,7 @@ function computeCatByMonth() {
   const result = {};
   MONTHS.forEach(m => {
     result[m] = {};
-    ALL_TX.filter(t => t.month === m).forEach(t => {
+    getTx(m).forEach(t => {
       result[m][t.cat] = (result[m][t.cat] || 0) + t.val;
     });
   });
@@ -3567,9 +3594,11 @@ function renderAll() {
 }
 
 // ═══════════════ EXTRATO CONTA CORRENTE (Itaú) ════════════════════════════
-// Diferente da fatura de cartão, o extrato é um fluxo de caixa contínuo, não
-// "gasto por categoria" — por isso fica numa aba separada, sem categoria,
-// orçamento ou vínculo de mês/cartão. Guardado em _fsData.extrato (array).
+// Diferente da fatura de cartão, o extrato mistura receita (salário, PIX
+// recebido), investimento (aplicação/resgate) e gasto de verdade (PIX
+// enviado, tarifas, seguros). Cada lançamento ganha um "tipo" — só os do
+// tipo "Gasto" entram no controle financeiro unificado (Resumo/Orçamento/
+// Tendências), via _extratoAsTx() + getTx(). Guardado em _fsData.extrato.
 let EXTRATO = [];
 
 function loadExtrato() {
@@ -3583,12 +3612,75 @@ async function saveExtrato(newEntries) {
   const toAdd = newEntries.filter(e => !existingKeys.has(_extratoKey(e)));
   EXTRATO = [...EXTRATO, ...toAdd].sort((a,b) => _extratoDateVal(b.data) - _extratoDateVal(a.data));
   await _saveFsData({ extrato: EXTRATO });
+  resyncMonthTotals();
   return toAdd.length;
 }
 
 function _extratoDateVal(ddmmyyyy) {
   const [d,m,y] = ddmmyyyy.split('/').map(Number);
   return new Date(y, m-1, d).getTime();
+}
+
+// Classifica um lançamento de extrato em Receita / Gasto / Investimento,
+// e — só pra Gasto — tenta achar uma categoria específica reaproveitando
+// o mesmo dicionário de comerciantes usado pela fatura de cartão.
+function classifyExtratoEntry(desc, val) {
+  const dl = desc.toLowerCase();
+
+  if (/aplicacao|aplicação|\bcdb\b|resgate|invest|\bfundo\b|tesouro direto|poupanca|poupança/.test(dl)) {
+    return { tipo: 'Investimento', cat: null };
+  }
+  if (/remuneracao|remuneração|\bsalario\b|\bsalário\b|provento|rendimento/.test(dl)) {
+    return { tipo: 'Receita', cat: null };
+  }
+
+  const isTransfer = /^pix |^ted |pix transf|pix qrs/.test(dl);
+  if (isTransfer && val > 0) return { tipo: 'Receita', cat: null };
+
+  if (val > 0) return { tipo: 'Receita', cat: null };
+
+  // Negativo e não é investimento/receita → Gasto. Tenta achar categoria
+  // específica no dicionário; usa "Transferências diversas" como fallback
+  // pra PIX/TED, e "Outros gastos" pro resto.
+  let matched = null, matchLen = 0;
+  for (const [key, cat] of Object.entries(MERCHANT_CAT)) {
+    if (dl.includes(key.toLowerCase()) && key.length > matchLen) { matched = cat; matchLen = key.length; }
+  }
+  return { tipo: 'Gasto', cat: matched || (isTransfer ? 'Transferências diversas' : 'Outros gastos') };
+}
+
+// Converte os lançamentos do extrato classificados como "Gasto" em pseudo-
+// transações no mesmo formato de ALL_TX, pra entrarem no cálculo unificado
+// via getTx(). Não persiste nada — é recalculado a cada chamada de getTx().
+function _extratoAsTx() {
+  return EXTRATO
+    .filter(e => !e.isBalance && e.tipo === 'Gasto')
+    .map(e => {
+      const [d, m] = e.data.split('/');
+      return {
+        data: `${d}/${m}`,
+        desc: e.desc,
+        val: Math.abs(e.val),
+        tipo: 'Vista',
+        cartao: 'conta-corrente',
+        cat: e.cat || 'Outros gastos',
+        month: NUM_TO_MONTH_FULL[m] || null,
+        flag: false,
+        _fromExtrato: true,
+      };
+    });
+}
+
+async function updateExtratoEntry(idx, field, value) {
+  const e = EXTRATO[idx];
+  if (!e) return;
+  e[field] = value;
+  if (field === 'tipo' && value !== 'Gasto') e.cat = null;
+  if (field === 'tipo' && value === 'Gasto' && !e.cat) e.cat = 'Outros gastos';
+  await _saveFsData({ extrato: EXTRATO });
+  resyncMonthTotals();
+  renderConta();
+  renderAll();
 }
 
 async function ensurePDFJSConta() { return ensurePDFJS(document.getElementById('conta-status')); }
@@ -3641,7 +3733,8 @@ async function processExtratoUpload() {
           newEntries.push({ data: dateTok, desc, val: 0, saldoDia: val, isBalance: true });
           continue;
         }
-        newEntries.push({ data: dateTok, desc, val, saldoDia: null, isBalance: false });
+        const { tipo, cat } = classifyExtratoEntry(desc, val);
+        newEntries.push({ data: dateTok, desc, val, saldoDia: null, isBalance: false, tipo, cat });
       }
     }
 
@@ -3655,32 +3748,45 @@ async function processExtratoUpload() {
     statusEl.textContent = `✅ ${nAdded} lançamento(s) novo(s) importado(s) (${newEntries.length - nAdded} já existiam).`;
     document.getElementById('conta-file').value = '';
     renderConta();
+    renderAll();
   } catch(e) {
     statusEl.className='err'; statusEl.textContent='❌ Erro ao ler PDF: ' + e.message;
   }
 }
 
+const EXTRATO_TIPOS = ['Receita','Gasto','Investimento'];
+const EXTRATO_TIPO_COLOR = {Receita:'#1E8449', Gasto:'#C0392B', Investimento:'#2E6DA4'};
+
 function renderConta() {
   const movs = EXTRATO.filter(e => !e.isBalance);
-  const entradas = movs.filter(e => e.val > 0).reduce((s,e) => s+e.val, 0);
-  const saidas = movs.filter(e => e.val < 0).reduce((s,e) => s+e.val, 0);
+  const receitas = movs.filter(e => e.tipo === 'Receita').reduce((s,e) => s+e.val, 0);
+  const gastos = movs.filter(e => e.tipo === 'Gasto').reduce((s,e) => s+Math.abs(e.val), 0);
+  const investido = movs.filter(e => e.tipo === 'Investimento').reduce((s,e) => s+Math.abs(e.val), 0);
   const saldoRecente = EXTRATO.find(e => e.isBalance); // já ordenado do mais recente pro mais antigo
 
   document.getElementById('conta-kpis').innerHTML = `
-    <div class="kpi"><div class="kpi-lbl">Entradas</div><div class="kpi-val" style="color:#1E8449">${fmtBRL(entradas)}</div></div>
-    <div class="kpi"><div class="kpi-lbl">Saídas</div><div class="kpi-val" style="color:#C0392B">${fmtBRL(Math.abs(saidas))}</div></div>
+    <div class="kpi"><div class="kpi-lbl">Receitas</div><div class="kpi-val" style="color:#1E8449">${fmtBRL(receitas)}</div></div>
+    <div class="kpi"><div class="kpi-lbl">Gastos</div><div class="kpi-val" style="color:#C0392B">${fmtBRL(gastos)}</div><div class="kpi-sub">entram no controle unificado</div></div>
+    <div class="kpi"><div class="kpi-lbl">Investido</div><div class="kpi-val" style="color:#2E6DA4">${fmtBRL(investido)}</div></div>
     <div class="kpi"><div class="kpi-lbl">Saldo mais recente</div><div class="kpi-val">${saldoRecente ? fmtBRL(saldoRecente.saldoDia) : '—'}</div><div class="kpi-sub">${saldoRecente ? saldoRecente.data : 'sem dados'}</div></div>
-    <div class="kpi"><div class="kpi-lbl">Lançamentos</div><div class="kpi-val">${movs.length}</div></div>
   `;
 
   document.getElementById('conta-body').innerHTML = EXTRATO.length === 0
-    ? `<tr><td colspan="4" style="text-align:center;padding:24px;opacity:.6">Nenhum lançamento importado ainda.</td></tr>`
-    : EXTRATO.map(e => e.isBalance
-      ? `<tr style="background:var(--bg);opacity:.75"><td>${e.data}</td><td colspan="2" style="font-style:italic">Saldo do dia</td><td style="font-weight:700">${fmtBRL(e.saldoDia)}</td></tr>`
+    ? `<tr><td colspan="6" style="text-align:center;padding:24px;opacity:.6">Nenhum lançamento importado ainda.</td></tr>`
+    : EXTRATO.map((e,idx) => e.isBalance
+      ? `<tr style="background:var(--bg);opacity:.75"><td>${e.data}</td><td colspan="4" style="font-style:italic">Saldo do dia</td><td style="font-weight:700">${fmtBRL(e.saldoDia)}</td></tr>`
       : `<tr>
         <td>${e.data}</td>
         <td>${e.desc}</td>
         <td style="color:${e.val>0?'#1E8449':'#C0392B'};font-weight:600">${e.val>0?'+':''}${fmtBRL(e.val)}</td>
+        <td><select style="color:${EXTRATO_TIPO_COLOR[e.tipo]};font-weight:600;border:none;background:transparent" onchange="updateExtratoEntry(${idx},'tipo',this.value)">
+          ${EXTRATO_TIPOS.map(t => `<option value="${t}" ${t===e.tipo?'selected':''}>${t}</option>`).join('')}
+        </select></td>
+        <td>${e.tipo === 'Gasto'
+          ? `<select onchange="updateExtratoEntry(${idx},'cat',this.value)">
+              ${CAT_ORDER.map(c => `<option value="${c}" ${c===e.cat?'selected':''}>${CAT_ICONS[c]||''} ${c}</option>`).join('')}
+            </select>`
+          : '<span style="opacity:.4">—</span>'}</td>
         <td></td>
       </tr>`).join('');
 }
@@ -3781,7 +3887,7 @@ function addMonthTab(month) {
 
 // ═══════════════ UPLOAD INVOICE ═══════════════
 let _pendingUpload = null; // { month, transactions, total, cardTotals }
-const CARD_NAME_MAP = {'5355':'BTG Virtual','6295':'Nick','2562':'EDU Físico','itau-virtual':'Itaú Virtual','itau-fisico':'Itaú Físico','itau-nicole':'Itaú Nicole'};
+const CARD_NAME_MAP = {'5355':'BTG Virtual','6295':'Nick','2562':'EDU Físico','itau-virtual':'Itaú Virtual','itau-fisico':'Itaú Físico','itau-nicole':'Itaú Nicole','conta-corrente':'Conta Corrente'};
 
 function openUploadModal(tab) {
   _pendingUpload = null;
@@ -4512,9 +4618,11 @@ function renderOrcamento() {
   _renderGoalDisplay();
   const budgets = _fsData.budgets || {};
   const cats = getCatTotals(m === 'todos' ? null : m);
-  const allCats = m === 'todos'
-    ? (() => { const r = {}; CAT_ORDER.forEach(c => { r[c] = MONTHS.reduce((s,mn) => s + (getCatTotals(mn)[c]||0), 0); }); return r; })()
-    : cats;
+  // getCatTotals('todos') usa getTx('todos'), que já inclui os gastos do
+  // extrato mesmo em meses sem fatura de cartão carregada (ex: Julho antes
+  // de existir upload de fatura pra esse mês) — soma direto em vez de
+  // iterar só MONTHS, senão esses gastos ficam de fora do "Todos".
+  const allCats = m === 'todos' ? getCatTotals('todos') : cats;
 
   // Label do mês
   document.getElementById('orc-month-label').textContent =
